@@ -1,129 +1,86 @@
 import cv2
-import cv2
 import mediapipe as mp
-import mouse
-import keyboard
-import math
-from win32api import GetSystemMetrics
-from datetime import datetime
+import numpy as np
 
-mp_drawing = mp.solutions.drawing_utils
-mp_drawing_styles = mp.solutions.drawing_styles
+# Initialize the MediaPipe Hands tracker
 mp_hands = mp.solutions.hands
 
-IndexPos = None
-sensitivity = 100
-verticalSensitivity = 150
-handDistancePos = None
-handsDistance = None
-zoomSensitivity = 50
-throwThresholdX = 0.1
-throwThresholdY = 0.1
-throwDurationMultiplier = 20
-startTime=datetime.now()
-targetDeltaTimeMultiplier=20
+# Initialize variables for storing previous fingertip position
+prev_x, prev_y = None, None
 
+# Create a whiteboard as a black canvas
+whiteboard = np.zeros((480, 640, 4), dtype=np.uint8)
+whiteboard[:, :, 3] = 255
 
+# Start the webcam
 cap = cv2.VideoCapture(0)
-with mp_hands.Hands(
-    model_complexity=0,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.2) as hands:
-  while cap.isOpened():
-    success, image = cap.read()
-    if not success:
-      print("Ignoring empty camera frame.")
-      continue
 
-    image.flags.writeable = False
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    results = hands.process(image)
+idle = False
 
-    # Draw the hand annotations on the image.
-    image.flags.writeable = True
-    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+# Loop until the user presses the "q" key
+while True:
+
+    pointer = np.zeros((480, 640, 4), dtype=np.uint8)
+    
+    # Capture the next frame from the webcam
+    ret, frame = cap.read()
+    x, y = 0, 0
+
+    # If the frame is empty, break the loop
+    if not ret:
+        break
+
+    # Convert the frame to RGB
+    frame = cv2.flip(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), 1)
+
+    # Process the frame with the MediaPipe Hands tracker
+    with mp_hands.Hands(
+        max_num_hands=1,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    ) as hands:
+        results = hands.process(frame)
+
+    # If a hand is detected
     if results.multi_hand_landmarks:
-      #draw to screen
-      for hand_landmarks in results.multi_hand_landmarks:
-        mp_drawing.draw_landmarks(
-            image,
-            hand_landmarks,
-            mp_hands.HAND_CONNECTIONS,
-            mp_drawing_styles.get_default_hand_landmarks_style(),
-            mp_drawing_styles.get_default_hand_connections_style())
+        # Get the hand landmark for the index fingertip
+        index_fingertip = results.multi_hand_landmarks[0].landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
 
+        # Convert the fingertip position to pixel coordinates
+        x, y = int(index_fingertip.x * 640), int(index_fingertip.y * 480)
 
-      deltaTime=(datetime.now()-startTime).total_seconds() * targetDeltaTimeMultiplier
-      startTime=datetime.now()
-      print(deltaTime)
-      if deltaTime>targetDeltaTimeMultiplier:
-        deltaTime=0
+        cv2.circle(pointer, (x, y), 2, (255, 255, 255, 255), 5)
 
-      if len(results.multi_handedness)==2: #ZOOM MODE 
-        thumbIndexDistance = math.sqrt(pow(results.multi_hand_landmarks[0].landmark[8].x - results.multi_hand_landmarks[0].landmark[4].x, 2)+pow(results.multi_hand_landmarks[0].landmark[8].x - results.multi_hand_landmarks[0].landmark[4].x, 2))
-        if thumbIndexDistance > 0 and thumbIndexDistance < 0.01:
-          handsDistance = math.sqrt(pow(results.multi_hand_landmarks[1].landmark[4].x - results.multi_hand_landmarks[0].landmark[4].x, 2) + pow(results.multi_hand_landmarks[1].landmark[4].y - results.multi_hand_landmarks[0].landmark[4].y, 2))
-          if handDistancePos: 
-            deltaHandsDistance = (handsDistance - handDistancePos)*deltaTime
-            mouse.wheel(-deltaHandsDistance*zoomSensitivity)
-          else: 
-            keyboard.release('shift')
-            IndexPos = None
-          handDistancePos = handsDistance
+        if not idle:
+            # If it's the first frame or previous coordinates are None, initialize them
+            if prev_x is None or prev_y is None:
+                prev_x, prev_y = x, y
 
-      elif results.multi_hand_landmarks[0]: #ROTATE MODE 
-        if IndexPos and deltaTime: 
-          landMarks = results.multi_hand_landmarks[0]
+            # Draw a line from the previous position to the current position on the whiteboard
+            cv2.line(whiteboard, (prev_x, prev_y), (x, y), (0, 0, 255), 5)
 
-          if (landMarks.landmark[0].x-IndexPos.landmark[0].x)/deltaTime > throwThresholdX: #thow X axis 
-            keyboard.release('shift')
-            mouse.release('middle')
-            mouse.move(GetSystemMetrics(0), GetSystemMetrics(1)/2, absolute=True, duration=0)
-            keyboard.press('shift')
-            mouse.press('middle')
-            mouse.move(0, GetSystemMetrics(1)/2, absolute=True, duration=(abs(landMarks.landmark[0].x-IndexPos.landmark[0].x)*throwDurationMultiplier)*deltaTime)
-            mouse.move(GetSystemMetrics(0)/2, GetSystemMetrics(1)/2, absolute=True, duration=0)
-            IndexPos = None
-          elif (landMarks.landmark[0].y-IndexPos.landmark[0].y)/deltaTime > throwThresholdY: #throw y axis
-            keyboard.release('shift')
-            mouse.release('middle')
-            mouse.move(GetSystemMetrics(0)/2, GetSystemMetrics(1)/2, absolute=True, duration=0)
-            keyboard.press('shift')
-            mouse.press('middle')
-            mouse.move(GetSystemMetrics(0)/2, 0, absolute=True, duration=(abs(landMarks.landmark[0].x-IndexPos.landmark[0].x)*(throwDurationMultiplier/2))*deltaTime)
-            keyboard.release('shift')
-            mouse.release('middle')
-            mouse.move(GetSystemMetrics(0)/2, GetSystemMetrics(1)/2, absolute=True, duration=0)
-            keyboard.press('shift')
-            mouse.press('middle')
-            mouse.move(GetSystemMetrics(0)/2, 0, absolute=True, duration=(abs(landMarks.landmark[0].x-IndexPos.landmark[0].x)*(throwDurationMultiplier/2))*deltaTime)
-            mouse.move(GetSystemMetrics(0)/2, GetSystemMetrics(1)/2, absolute=True, duration=0)
-            IndexPos = None
-          
-          else: 
-            deltaX = (landMarks.landmark[8].x-landMarks.landmark[0].x) - (IndexPos.landmark[8].x-IndexPos.landmark[0].x)
-            deltaY = (landMarks.landmark[8].y-landMarks.landmark[0].y) - (IndexPos.landmark[8].y-IndexPos.landmark[0].y)
-            #rotating 
-            deltaXY = (math.sqrt(pow(deltaX, 2)+pow(deltaY, 2))*(deltaX/abs(deltaX)))*deltaTime
-            mouse.move(-deltaXY*sensitivity, 0, absolute=False, duration=0.01)
-            #rotating up and down
-            WristDeltaY = (landMarks.landmark[0].y - IndexPos.landmark[0].y)*deltaTime
-            mouse.move(0, WristDeltaY*verticalSensitivity, absolute=False, duration=0.01)
-        
-        else: 
-          keyboard.press('shift')
-          mouse.press('middle')
-          handDistancePos = None
-        IndexPos = results.multi_hand_landmarks[0]
-      
-      elif len(results.multi_handedness)==0: 
-        IndexPos = None
-        handDistancePos = None
+            # Update the previous position
+            prev_x, prev_y = x, y
+
+    # Display the combined image of the webcam frame and the whiteboard
+    cv2.imshow("Whiteboard", cv2.addWeighted(whiteboard, 1, pointer, 1, 0))
+
+    # Get the user's input
+    key = cv2.waitKey(1)
     
+    if key == ord('z'):
+        idle = True
+        prev_x, prev_y = None, None
+    else:
+        idle = False
+
+    # If the user presses the "q" key, break the loop
+    if key == ord("q"):
+        break
+    elif key == ord('x'):
+        whiteboard = np.zeros((480, 640, 4), dtype=np.uint8)
+        whiteboard[:, :, 3] = 255
     
-    cv2.imshow('MediaPipe Hands', cv2.flip(image, 1))
-    if cv2.waitKey(5) & 0xFF == 27:
-      mouse.release('middle')
-      mouse.release('shift')
-      break
+# Release the webcam
 cap.release()
+cv2.destroyAllWindows()
